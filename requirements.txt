@@ -1,0 +1,10 @@
+# The saved models (.pkl) were trained with scikit-learn 1.9.1.
+# Pickled models are only guaranteed to load with the same scikit-learn version.
+scikit-learn==1.9.1
+pandas>=2.0
+numpy>=1.24
+joblib>=1.3
+# only needed to run the notebook
+matplotlib>=3.7
+seaborn>=0.13
+jupyter

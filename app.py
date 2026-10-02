@@ -1,5 +1,7 @@
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
+
 import joblib
 import pandas as pd
 
@@ -12,11 +14,14 @@ FONT_TITLE = ("Helvetica", 16, "bold")
 FONT_LABEL = ("Helvetica", 11)
 FONT_RESULT = ("Helvetica", 13, "bold")
 
-# LOAD MODEL
+# LOAD MODELS
+# Paths are relative to this file, so the app also works when started from another folder
+BASE_DIR = Path(__file__).resolve().parent
 try:
-    model = joblib.load("model_1_LR.pkl")
+    model_lr = joblib.load(BASE_DIR / "model_1_LR.pkl")  # Logistic Regression
+    model_rf = joblib.load(BASE_DIR / "model_2_RF.pkl")  # Random Forest
 except Exception as e:
-    raise RuntimeError(f"❌ Failed to load model: {e}")
+    raise RuntimeError(f"❌ Failed to load models: {e}")
 
 # MAIN WINDOW
 root = tk.Tk()
@@ -50,8 +55,8 @@ input_frame.grid(row=1, column=0, columnspan=4)
 
 # VARIABLES
 vars_numeric = {
-    "ApplicantIncome": tk.StringVar(value="100"),
-    "CoapplicantIncome": tk.StringVar(value="100"),
+    "ApplicantIncome": tk.StringVar(value="5000"),
+    "CoapplicantIncome": tk.StringVar(value="0"),
     "LoanAmount": tk.StringVar(value="120"),
     "Loan_Amount_Term": tk.StringVar(value="360"),
 }
@@ -71,11 +76,26 @@ credit_map = {
     "Bad (No Credit History)": 0
 }
 
+# Readable labels for the GUI (keys are the column names the models expect)
+LABELS = {
+    "ApplicantIncome": "Applicant Income",
+    "CoapplicantIncome": "Coapplicant Income",
+    "LoanAmount": "Loan Amount (thousands)",
+    "Loan_Amount_Term": "Loan Term (months)",
+    "Credit_History": "Credit History",
+    "Gender": "Gender",
+    "Married": "Married",
+    "Dependents": "Dependents",
+    "Education": "Education",
+    "Self_Employed": "Self Employed",
+    "Property_Area": "Property Area",
+}
+
 
 # FIELD BUILDER
 
-def add_field(row, col, label, widget):
-    ttk.Label(input_frame, text=label).grid(row=row, column=col, padx=10, pady=8, sticky="e")
+def add_field(row, col, key, widget):
+    ttk.Label(input_frame, text=LABELS[key]).grid(row=row, column=col, padx=10, pady=8, sticky="e")
     widget.grid(row=row, column=col + 1, padx=10, pady=8, sticky="w")
 
 
@@ -145,29 +165,72 @@ result_label = ttk.Label(
     text="",
     font=FONT_RESULT
 )
+result_label.configure(justify="center")
 result_label.grid(row=2, column=0, columnspan=4, pady=25)
 
 
 # PREDICTION FUNCTION
 
+def read_numeric_inputs():
+    """Return the numeric fields as floats, or raise ValueError with a message for the user."""
+    values = {}
+    for key, var in vars_numeric.items():
+        text = var.get().strip().replace(",", "")
+        try:
+            value = float(text)
+        except ValueError:
+            raise ValueError(f"{LABELS[key]} must be a number")
+        if value < 0:
+            raise ValueError(f"{LABELS[key]} cannot be negative")
+        values[key] = value
+
+    if values["LoanAmount"] == 0 or values["Loan_Amount_Term"] == 0:
+        raise ValueError("Loan Amount and Loan Term must be greater than 0")
+    return values
+
+
+def loan_decision(df):
+    """Two-model decision: automatic only when both models agree, otherwise manual review."""
+    pred_lr = model_lr.predict(df)[0]
+    pred_rf = model_rf.predict(df)[0]
+    prob_lr = model_lr.predict_proba(df)[0][1]
+    prob_rf = model_rf.predict_proba(df)[0][1]
+
+    if pred_lr == 1 and pred_rf == 1:
+        decision = "APPROVED"
+    elif pred_lr == 0 and pred_rf == 0:
+        decision = "REJECTED"
+    else:
+        decision = "MANUAL REVIEW"
+    return decision, prob_lr, prob_rf
+
+
+RESULT_COLORS = {"APPROVED": "#00ff99", "REJECTED": "#ff6666", "MANUAL REVIEW": "#ffd966"}
+
+
 def evaluate():
     try:
         data = {
-            **{k: float(v.get()) for k, v in vars_numeric.items()},
+            **read_numeric_inputs(),
             **{k: v.get() for k, v in vars_categorical.items()}
         }
-        data["Credit_History"] = credit_map[data["Credit_History"]]
+    except ValueError as e:
+        result_label.config(text=f"Invalid input: {e}", foreground="orange")
+        return
 
-        df = pd.DataFrame([data])
-        pred = model.predict(df)[0]
+    data["Credit_History"] = credit_map[data["Credit_History"]]
 
-        if pred == 1:
-            result_label.config(text="Final Decision: APPROVED", foreground="#00ff99")
-        else:
-            result_label.config(text="Final Decision: REJECTED", foreground="#ff6666")
-
+    try:
+        decision, prob_lr, prob_rf = loan_decision(pd.DataFrame([data]))
     except Exception as e:
         result_label.config(text=f"Error: {e}", foreground="orange")
+        return
+
+    result_label.config(
+        text=(f"Final Decision: {decision}\n"
+              f"Approval probability — Logistic Regression: {prob_lr:.0%}, Random Forest: {prob_rf:.0%}"),
+        foreground=RESULT_COLORS[decision]
+    )
 
 
 # BUTTON
